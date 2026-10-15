@@ -44,6 +44,11 @@ PAGES = [
     {"name": "X-Plane.Org Store (Aerobask)",
      "url": "https://store.x-plane.org/Aerobask_c_151.html",
      "alert_on_change": True},
+    # Forum : pas d'alerte à chaque changement, mais un récap dédié dans le rapport de 22h.
+    {"name": "X-Plane.Org Forum",
+     "url": "https://forums.x-plane.org",
+     "alert_on_change": False,
+     "forum": True},
 ]
 
 # Mots-clés (insensibles à la casse) qui indiquent une sortie / mise en vente.
@@ -146,9 +151,74 @@ def check_page(page: dict, state: dict) -> None:
     state[url] = {"hash": digest, "hit": bool(hit)}
 
 
+def fetch_body(url: str) -> str:
+    deadline = time.time() + 30
+    r = requests.get(url, headers=HEADERS, timeout=(10, 10), stream=True)
+    r.raise_for_status()
+    chunks = []
+    for chunk in r.iter_content(chunk_size=8192):
+        chunks.append(chunk)
+        if time.time() > deadline:
+            raise requests.RequestException("délai total dépassé (30 s)")
+    return b"".join(chunks).decode(r.encoding or "utf-8", errors="replace")
+
+
+def daily_report() -> None:
+    """Message récapitulatif : état de chaque page, sans modifier l'état mémorisé."""
+    lines = ["Rapport Falcon 8X (22h)"]
+    problems = 0
+    for page in PAGES:
+        try:
+            text = clean_text(fetch_body(page["url"]))
+            hit = keyword_hit(text)
+            if page.get("forum"):
+                # Récap spécial forum : extraits autour de "Falcon 8X" / "Aerobask".
+                snippets, seen = [], set()
+                for m in re.finditer(r"falcon\s*8x|aerobask", text, flags=re.IGNORECASE):
+                    snip = text[max(0, m.start() - 50): m.end() + 70].strip()
+                    key = snip[:40].lower()
+                    if key not in seen:
+                        seen.add(key)
+                        snippets.append(snip)
+                    if len(snippets) >= 5:
+                        break
+                lines.append("")
+                lines.append(f"FORUM ({page['name']}) :")
+                if snippets:
+                    lines.append(f"{len(snippets)} mention(s) Falcon 8X / Aerobask sur la page :")
+                    lines.extend(f"  . ...{s}..." for s in snippets)
+                else:
+                    lines.append("  aucune mention de Falcon 8X ou d'Aerobask sur la page d'accueil.")
+                if hit:
+                    lines.append(f"  mot-clé de sortie détecté : «{hit[:80]}»")
+                lines.append("")
+            elif hit:
+                lines.append(f"- {page['name']} : mot-clé détecté «{hit[:80]}»")
+            else:
+                lines.append(f"- {page['name']} : OK, rien de nouveau")
+        except requests.RequestException as e:
+            problems += 1
+            lines.append(f"- {page['name']} : INACCESSIBLE ({e})")
+    lines.append("")
+    lines.append("Le bot tourne bien." if problems == 0
+                 else f"Le bot tourne, mais {problems} page(s) injoignable(s).")
+    notify("\n".join(lines))
+
+
 def main() -> None:
     if "--test" in sys.argv:
         notify("Test : le bot Falcon 8X fonctionne.")
+        return
+
+    if "--daily" in sys.argv:
+        # Les crons GitHub sont en UTC : on lance à 20h et 21h UTC et on ne
+        # garde que l'exécution qui tombe à 22h à Paris (heure d'été ou d'hiver).
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        if "--force" in sys.argv or datetime.now(ZoneInfo("Europe/Paris")).hour == 22:
+            daily_report()
+        else:
+            print("Pas 22h à Paris : rapport ignoré.")
         return
 
     state = load_state()
