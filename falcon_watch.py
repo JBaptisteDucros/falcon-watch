@@ -44,8 +44,6 @@ PAGES = [
     {"name": "X-Plane.Org Store (Aerobask)",
      "url": "https://store.x-plane.org/Aerobask_c_151.html",
      "alert_on_change": True},
-   {"name": "X-Plane.Org Forum (HomePage)",
-     "url": "https://forums.x-plane.org",
 ]
 
 # Mots-clés (insensibles à la casse) qui indiquent une sortie / mise en vente.
