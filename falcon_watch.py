@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""
+Falcon 8X watcher (Aerobask) -> notifications Telegram.
+
+Principe : toutes les INTERVAL secondes, le script télécharge chaque page
+de la liste PAGES. Il t'alerte si :
+  - un mot-clé de sortie apparaît (KEYWORDS) alors qu'il n'y était pas avant,
+  - ou (optionnel) si le contenu de la page change.
+
+Installation :  pip install requests
+Lancement    :  python falcon_watch.py
+Test Telegram:  python falcon_watch.py --test
+
+Configuration Telegram (une seule fois) :
+  1. Sur Telegram, parle à @BotFather -> /newbot -> récupère le TOKEN.
+  2. Envoie un message quelconque à ton nouveau bot.
+  3. Ouvre https://api.telegram.org/bot<TOKEN>/getUpdates et repère "chat":{"id":...}.
+  4. Mets les deux valeurs en variables d'environnement :
+       export TELEGRAM_TOKEN="123456:ABC..."
+       export TELEGRAM_CHAT_ID="123456789"
+"""
+
+import hashlib
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+import requests
+
+# ----------------------------------------------------------------- CONFIG --
+
+# A ADAPTER : colle ici les URLs exactes (page du store, fil du forum
+# X-Plane.org, actualités Aerobask, site Dassault...).
+PAGES = [
+    {"name": "Dassault Store (X-Plane)",
+     "url": "https://www.thestore-dassault-aviation.com/en/simulation/x-plane",
+     "alert_on_change": True},
+    {"name": "Aerobask (page Falcon 8X)",
+     "url": "https://aerobask.com/falcon_8x.php",
+     "alert_on_change": True},
+    {"name": "X-Plane.Org Store (Aerobask)",
+     "url": "https://store.x-plane.org/Aerobask_c_151.html",
+     "alert_on_change": True},
+]
+
+# Mots-clés (insensibles à la casse) qui indiquent une sortie / mise en vente.
+KEYWORDS = [
+    r"falcon\s*8x.{0,200}(available|released|buy|add to cart|order|beta|keys)",
+    r"(available|released|buy|add to cart|order|beta|keys).{0,200}falcon\s*8x",
+    r"limited beta",
+]
+
+INTERVAL = 300  # secondes entre deux passages (5 min, reste raisonnable)
+STATE_FILE = Path("falcon_watch_state.json")
+HEADERS = {"User-Agent": "Mozilla/5.0 (falcon-watch personal script)"}
+
+TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+# ------------------------------------------------------------------- CODE --
+
+
+def notify(text: str) -> None:
+    print(f"[ALERTE] {text}")
+    if not (TOKEN and CHAT_ID):
+        print("  (Telegram non configuré : TELEGRAM_TOKEN / TELEGRAM_CHAT_ID)")
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            data={"chat_id": CHAT_ID, "text": text, "disable_web_page_preview": False},
+            timeout=15,
+        )
+    except requests.RequestException as e:
+        print(f"  Erreur Telegram : {e}")
+
+
+def load_state() -> dict:
+    if STATE_FILE.exists():
+        try:
+            return json.loads(STATE_FILE.read_text())
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
+def save_state(state: dict) -> None:
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def clean_text(html: str) -> str:
+    html = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", html)
+    text = re.sub(r"(?s)<[^>]+>", " ", html)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def keyword_hit(text: str):
+    for pattern in KEYWORDS:
+        m = re.search(pattern, text, flags=re.IGNORECASE)
+        if m:
+            return m.group(0)[:200]
+    return None
+
+
+def check_page(page: dict, state: dict) -> None:
+    url = page["url"]
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=20)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        print(f"[{time.strftime('%H:%M:%S')}] {page['name']} : erreur ({e})")
+        return
+
+    text = clean_text(r.text)
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    hit = keyword_hit(text)
+    prev = state.get(url)  # None = premier passage
+
+    if prev is None:
+        # Premier passage : on enregistre l'état de référence sans alerter,
+        # sauf si un mot-clé est déjà présent.
+        state[url] = {"hash": digest, "hit": bool(hit)}
+        if hit:
+            notify(f"Falcon 8X : mot-clé déjà présent sur {page['name']}\n«{hit}»\n{url}")
+        print(f"[{time.strftime('%H:%M:%S')}] {page['name']} : état initial enregistré")
+        return
+
+    if hit and not prev["hit"]:
+        notify(f"Falcon 8X : annonce détectée sur {page['name']} !\n«{hit}»\n{url}")
+    elif page.get("alert_on_change") and digest != prev["hash"]:
+        notify(f"Changement détecté sur {page['name']}\n{url}")
+    else:
+        print(f"[{time.strftime('%H:%M:%S')}] {page['name']} : rien de nouveau")
+
+    state[url] = {"hash": digest, "hit": bool(hit)}
+
+
+def main() -> None:
+    if "--test" in sys.argv:
+        notify("Test : le bot Falcon 8X fonctionne.")
+        return
+
+    state = load_state()
+    print(f"Surveillance de {len(PAGES)} page(s), toutes les {INTERVAL}s. Ctrl+C pour arrêter.")
+    while True:
+        for page in PAGES:
+            check_page(page, state)
+            save_state(state)
+        time.sleep(INTERVAL)
+
+
+if __name__ == "__main__":
+    main()
