@@ -1,0 +1,27 @@
+name: Falcon 8X daily report
+
+on:
+  schedule:
+    - cron: "0 20 * * *"   # 22h Paris en heure d'été
+    - cron: "0 21 * * *"   # 22h Paris en heure d'hiver
+  workflow_dispatch:        # lancement manuel (envoie le rapport tout de suite)
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: Send daily report
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && '--force' || '' }}
+        run: python falcon_watch.py --daily $FORCE
