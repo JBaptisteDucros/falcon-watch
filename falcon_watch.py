@@ -43,12 +43,8 @@ PAGES = [
      "alert_on_change": True},
     {"name": "X-Plane.Org Store (Aerobask)",
      "url": "https://store.x-plane.org/Aerobask_c_151.html",
-     "alert_on_change": True},
-    # Forum : pas d'alerte à chaque changement, mais un récap dédié dans le rapport de 22h.
-    {"name": "X-Plane.Org Forum",
-     "url": "https://forums.x-plane.org",
-     "alert_on_change": False,
-     "forum": True},
+     "alert_on_change": True,
+     "local_only": True},   # bloqué (403) depuis GitHub : surveillé depuis ton PC avec --local
 ]
 
 # Mots-clés (insensibles à la casse) qui indiquent une sortie / mise en vente.
@@ -215,6 +211,11 @@ def main() -> None:
     if "--test" in sys.argv:
         notify("Test : le bot Falcon 8X fonctionne.")
         return
+
+    # Sans --local : on traite les pages "normales" (celles que GitHub peut lire).
+    # Avec --local : on traite seulement les pages marquées local_only (depuis ton PC).
+    local = "--local" in sys.argv
+    PAGES[:] = [p for p in PAGES if bool(p.get("local_only")) == local]
 
     if "--daily" in sys.argv:
         # Les crons GitHub sont en UTC : on lance à 20h et 21h UTC et on ne
