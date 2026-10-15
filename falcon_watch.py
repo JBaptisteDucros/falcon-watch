@@ -44,6 +44,9 @@ PAGES = [
     {"name": "X-Plane.Org Store (Aerobask)",
      "url": "https://store.x-plane.org/Aerobask_c_151.html",
      "alert_on_change": True},
+   {"name": "X-Plane.Org Forum (HomePage)",
+     "url": "https://forums.x-plane.org",
+    
 ]
 
 # Mots-clés (insensibles à la casse) qui indiquent une sortie / mise en vente.
@@ -108,13 +111,21 @@ def keyword_hit(text: str):
 def check_page(page: dict, state: dict) -> None:
     url = page["url"]
     try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
+        # Durée totale limitée à 30 s par page (évite les sites qui répondent au compte-gouttes).
+        deadline = time.time() + 30
+        r = requests.get(url, headers=HEADERS, timeout=(10, 10), stream=True)
         r.raise_for_status()
+        chunks = []
+        for chunk in r.iter_content(chunk_size=8192):
+            chunks.append(chunk)
+            if time.time() > deadline:
+                raise requests.RequestException("délai total dépassé (30 s)")
+        body = b"".join(chunks).decode(r.encoding or "utf-8", errors="replace")
     except requests.RequestException as e:
         print(f"[{time.strftime('%H:%M:%S')}] {page['name']} : erreur ({e})")
         return
 
-    text = clean_text(r.text)
+    text = clean_text(body)
     digest = hashlib.sha256(text.encode()).hexdigest()
     hit = keyword_hit(text)
     prev = state.get(url)  # None = premier passage
@@ -144,6 +155,13 @@ def main() -> None:
         return
 
     state = load_state()
+    if "--once" in sys.argv:
+        # Mode GitHub Actions : un seul passage, puis on quitte.
+        for page in PAGES:
+            check_page(page, state)
+        save_state(state)
+        return
+
     print(f"Surveillance de {len(PAGES)} page(s), toutes les {INTERVAL}s. Ctrl+C pour arrêter.")
     while True:
         for page in PAGES:
