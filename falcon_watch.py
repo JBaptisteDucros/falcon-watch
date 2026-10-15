@@ -76,11 +76,16 @@ def notify(text: str) -> None:
         print("  (Telegram non configuré : TELEGRAM_TOKEN / TELEGRAM_CHAT_ID)")
         return
     try:
-        requests.post(
+        r = requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             data={"chat_id": CHAT_ID, "text": text, "disable_web_page_preview": False},
             timeout=15,
         )
+        if r.ok:
+            print("  (message Telegram envoyé)")
+        else:
+            print(f"  ERREUR TELEGRAM {r.status_code} : {r.text[:200]}")
+            print("  -> vérifie TELEGRAM_TOKEN et TELEGRAM_CHAT_ID")
     except requests.RequestException as e:
         print(f"  Erreur Telegram : {e}")
 
@@ -214,8 +219,10 @@ def main() -> None:
 
     # Sans --local : on traite les pages "normales" (celles que GitHub peut lire).
     # Avec --local : on traite seulement les pages marquées local_only (depuis ton PC).
+    # Avec --all : toutes les pages, sans distinction (usage sur ton PC).
     local = "--local" in sys.argv
-    PAGES[:] = [p for p in PAGES if bool(p.get("local_only")) == local]
+    if "--all" not in sys.argv:
+        PAGES[:] = [p for p in PAGES if bool(p.get("local_only")) == local]
 
     if "--daily" in sys.argv:
         # Les crons GitHub sont en UTC : on lance à 20h et 21h UTC et on ne
