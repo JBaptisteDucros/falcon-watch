@@ -46,7 +46,6 @@ PAGES = [
      "alert_on_change": True},
    {"name": "X-Plane.Org Forum (HomePage)",
      "url": "https://forums.x-plane.org",
-    
 ]
 
 # Mots-clés (insensibles à la casse) qui indiquent une sortie / mise en vente.
